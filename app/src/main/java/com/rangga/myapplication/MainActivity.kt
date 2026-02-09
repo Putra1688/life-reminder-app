@@ -33,8 +33,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnKlik: Button
     private lateinit var btnCopy: ImageButton
     private lateinit var btnShare: ImageButton
+    private lateinit var btnLanguage: Button
     private lateinit var progressBar: ProgressBar
     private lateinit var historyContainer: LinearLayout
+    
+    // Language State
+    private var isIndonesian = false // Default English
     
     // History & Storage
     private lateinit var sharedPreferences: SharedPreferences
@@ -54,9 +58,15 @@ class MainActivity : AppCompatActivity() {
         btnKlik = findViewById(R.id.btnKlik)
         btnCopy = findViewById(R.id.btnCopy)
         btnShare = findViewById(R.id.btnShare)
+        btnLanguage = findViewById(R.id.btnLanguage)
         progressBar = findViewById(R.id.progressBar)
         historyContainer = findViewById(R.id.historyContainer)
-
+        
+        // Language Toggle Action
+        updateLanguageButton()
+        btnLanguage.setOnClickListener {
+            toggleLanguage()
+        }
         // Init Prefs & Load History
         sharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         loadHistory()
@@ -89,34 +99,99 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun toggleLanguage() {
+        isIndonesian = !isIndonesian
+        updateLanguageButton()
+        fetchQuote() // Auto fetch new quote when language changes
+    }
+
+    private fun updateLanguageButton() {
+        if (isIndonesian) {
+            btnLanguage.text = "ID"
+            tvQuote.text = "Siap untuk inspirasi?"
+            tvAuthor.text = "- Klik tombol"
+        } else {
+            btnLanguage.text = "EN"
+            tvQuote.text = "Ready for inspiration?"
+            tvAuthor.text = "- Click button"
+        }
+    }
+
     private fun fetchQuote() {
         progressBar.visibility = View.VISIBLE
         btnKlik.isEnabled = false
 
+        if (isIndonesian) {
+            fetchIndonesianQuote()
+        } else {
+            fetchEnglishQuote()
+        }
+    }
+
+    private fun fetchEnglishQuote() {
         ApiClient.instance.getRandomQuote().enqueue(object : Callback<QuoteResponse> {
             override fun onResponse(call: Call<QuoteResponse>, response: Response<QuoteResponse>) {
-                progressBar.visibility = View.GONE
-                btnKlik.isEnabled = true
-
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    val newQuote = body?.quote ?: "No Quote"
-                    val newAuthor = body?.author ?: "Unknown"
-
-                    updateUI(newQuote, newAuthor)
-                    addToHistory(newQuote, newAuthor)
-                    setRandomGradient()
-                } else {
-                    Toast.makeText(this@MainActivity, "Gagal: ${response.code()}", Toast.LENGTH_SHORT).show()
-                }
+                handleQuoteResponse(response.isSuccessful, response.body()?.quote, response.body()?.author, response.code().toString())
             }
 
             override fun onFailure(call: Call<QuoteResponse>, t: Throwable) {
-                progressBar.visibility = View.GONE
-                btnKlik.isEnabled = true
-                Toast.makeText(this@MainActivity, "Error Jaringan: ${t.message}", Toast.LENGTH_LONG).show()
+                handleQuoteFailure(t)
             }
         })
+    }
+
+    private fun fetchIndonesianQuote() {
+        // Hybrid Approach: Try API first, Fallback to Local
+        val url = "https://quotes.liupurnomo.com/api/quotes/random"
+        ApiClient.instance.getIndonesianQuote(url).enqueue(object : Callback<IndoQuoteResponse> {
+            override fun onResponse(call: Call<IndoQuoteResponse>, response: Response<IndoQuoteResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()
+                    handleQuoteResponse(true, body?.quote, body?.author, response.code().toString())
+                } else {
+                    // API Failed -> Use Local
+                    useLocalIndonesianQuote()
+                }
+            }
+
+            override fun onFailure(call: Call<IndoQuoteResponse>, t: Throwable) {
+                 // Network Failed -> Use Local
+                 useLocalIndonesianQuote()
+            }
+        })
+    }
+    
+    private fun useLocalIndonesianQuote() {
+        val (quote, author) = IndonesianQuotes.getRandomQuote()
+        // Simulate slight delay for UX
+        runOnUiThread {
+             handleQuoteResponse(true, quote, author, "Local")
+        }
+    }
+
+    private fun handleQuoteResponse(isSuccess: Boolean, quote: String?, author: String?, errorCode: String?) {
+        progressBar.visibility = View.GONE
+        btnKlik.isEnabled = true
+
+        if (isSuccess) {
+            val newQuote = quote ?: "No Quote"
+            val newAuthor = author ?: "Unknown"
+
+            updateUI(newQuote, newAuthor)
+            addToHistory(newQuote, newAuthor)
+            setRandomGradient()
+        } else {
+             Toast.makeText(this@MainActivity, "Gagal/Offline: Mode Lokal Aktif", Toast.LENGTH_SHORT).show()
+             // Even if English fails, we can't easily fallback to ID local without confusing user. 
+             // But for ID, we handled it. For EN, we just show error.
+        }
+
+    }
+
+    private fun handleQuoteFailure(t: Throwable) {
+        progressBar.visibility = View.GONE
+        btnKlik.isEnabled = true
+        Toast.makeText(this@MainActivity, "Error Jaringan: ${t.message}", Toast.LENGTH_LONG).show()
     }
 
     private fun updateUI(quote: String, author: String) {

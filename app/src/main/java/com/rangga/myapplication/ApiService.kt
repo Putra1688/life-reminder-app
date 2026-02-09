@@ -10,6 +10,10 @@ import retrofit2.http.GET
 interface ApiService {
     @GET("quotes/random") // Endpoint untuk kutipan acak
     fun getRandomQuote(): Call<QuoteResponse>
+    
+    @GET
+    fun getIndonesianQuote(@retrofit2.http.Url url: String): Call<IndoQuoteResponse>
+
 }
 
 object ApiClient {
