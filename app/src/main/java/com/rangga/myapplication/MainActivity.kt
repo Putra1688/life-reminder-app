@@ -19,6 +19,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.cardview.widget.CardView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
 import retrofit2.Call
 import retrofit2.Callback
@@ -37,12 +39,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progressBar: ProgressBar
     private lateinit var historyContainer: LinearLayout
     
-    // Language State
-    private var isIndonesian = false // Default English
+    private var isIndonesian = true 
     
-    // History & Storage
     private lateinit var sharedPreferences: SharedPreferences
-    private val historyList = mutableListOf<Pair<String, String>>() // Pair of Quote, Author
+    private val historyList = mutableListOf<Pair<String, String>>()
     private val PREFS_NAME = "QuoteHistoryPrefs"
     private val KEY_HISTORY = "history_list"
 
@@ -51,7 +51,6 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
-        // Initialize Views
         mainLayout = findViewById(R.id.mainLayout)
         tvQuote = findViewById(R.id.tvQuote)
         tvAuthor = findViewById(R.id.tvAuthor)
@@ -61,26 +60,30 @@ class MainActivity : AppCompatActivity() {
         btnLanguage = findViewById(R.id.btnLanguage)
         progressBar = findViewById(R.id.progressBar)
         historyContainer = findViewById(R.id.historyContainer)
+
+        // Perbaikan Insets agar UI responsif dan tidak terpotong Status Bar/Notch
+        ViewCompat.setOnApplyWindowInsetsListener(mainLayout) { v, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // Hanya berikan top padding agar elemen header tidak tertutup status bar
+            v.setPadding(0, systemBars.top, 0, 0)
+            insets
+        }
         
-        // Language Toggle Action
         updateLanguageButton()
         btnLanguage.setOnClickListener {
             toggleLanguage()
         }
-        // Init Prefs & Load History
+
         sharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         loadHistory()
         refreshHistoryUI()
         
-        // Initial random gradient
         setRandomGradient()
 
-        // Get Quote Action
         btnKlik.setOnClickListener {
             fetchQuote()
         }
 
-        // Copy Action
         btnCopy.setOnClickListener {
             val quote = tvQuote.text.toString()
             val author = tvAuthor.text.toString()
@@ -89,7 +92,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Share Action
         btnShare.setOnClickListener {
             val quote = tvQuote.text.toString()
             val author = tvAuthor.text.toString()
@@ -102,7 +104,7 @@ class MainActivity : AppCompatActivity() {
     private fun toggleLanguage() {
         isIndonesian = !isIndonesian
         updateLanguageButton()
-        fetchQuote() // Auto fetch new quote when language changes
+        fetchQuote()
     }
 
     private fun updateLanguageButton() {
@@ -141,21 +143,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun fetchIndonesianQuote() {
-        // Hybrid Approach: Try API first, Fallback to Local
+        // Coba API dulu
         val url = "https://quotes.liupurnomo.com/api/quotes/random"
         ApiClient.instance.getIndonesianQuote(url).enqueue(object : Callback<IndoQuoteResponse> {
             override fun onResponse(call: Call<IndoQuoteResponse>, response: Response<IndoQuoteResponse>) {
                 if (response.isSuccessful && response.body() != null) {
                     val body = response.body()
-                    handleQuoteResponse(true, body?.quote, body?.author, response.code().toString())
+                    // Pastikan body quote tidak null sebelum dikirim
+                    if (body?.quote != null) {
+                        handleQuoteResponse(true, body.quote, body.author, response.code().toString())
+                    } else {
+                        useLocalIndonesianQuote()
+                    }
                 } else {
-                    // API Failed -> Use Local
                     useLocalIndonesianQuote()
                 }
             }
 
             override fun onFailure(call: Call<IndoQuoteResponse>, t: Throwable) {
-                 // Network Failed -> Use Local
                  useLocalIndonesianQuote()
             }
         })
@@ -163,7 +168,6 @@ class MainActivity : AppCompatActivity() {
     
     private fun useLocalIndonesianQuote() {
         val (quote, author) = IndonesianQuotes.getRandomQuote()
-        // Simulate slight delay for UX
         runOnUiThread {
              handleQuoteResponse(true, quote, author, "Local")
         }
@@ -173,25 +177,28 @@ class MainActivity : AppCompatActivity() {
         progressBar.visibility = View.GONE
         btnKlik.isEnabled = true
 
-        if (isSuccess) {
-            val newQuote = quote ?: "No Quote"
-            val newAuthor = author ?: "Unknown"
+        if (isSuccess && quote != null) {
+            val newQuote = quote.replace("\"", "") // Bersihkan tanda kutip ganda jika ada
+            val newAuthor = if (author.isNullOrBlank() || author == "null") "Unknown" else author
 
             updateUI(newQuote, newAuthor)
             addToHistory(newQuote, newAuthor)
             setRandomGradient()
         } else {
-             Toast.makeText(this@MainActivity, "Gagal/Offline: Mode Lokal Aktif", Toast.LENGTH_SHORT).show()
-             // Even if English fails, we can't easily fallback to ID local without confusing user. 
-             // But for ID, we handled it. For EN, we just show error.
+             // Fallback terakhir jika semua gagal
+             useLocalIndonesianQuote()
         }
-
     }
 
     private fun handleQuoteFailure(t: Throwable) {
         progressBar.visibility = View.GONE
         btnKlik.isEnabled = true
-        Toast.makeText(this@MainActivity, "Error Jaringan: ${t.message}", Toast.LENGTH_LONG).show()
+        // Jika gagal koneksi saat bahasa Indonesia, langsung lari ke local
+        if (isIndonesian) {
+            useLocalIndonesianQuote()
+        } else {
+            Toast.makeText(this@MainActivity, "Error Jaringan: ${t.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun updateUI(quote: String, author: String) {
@@ -218,12 +225,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun setRandomGradient() {
         val colors = arrayOf(
-            intArrayOf(Color.parseColor("#FF512F"), Color.parseColor("#DD2476")), // Bloody Mary (Strong Orange-Red)
-            intArrayOf(Color.parseColor("#11998e"), Color.parseColor("#38ef7d")), // Lush (Strong Green-Teal)
-            intArrayOf(Color.parseColor("#0575E6"), Color.parseColor("#021B79")), // Navy (Deep Blue)
-            intArrayOf(Color.parseColor("#8E2DE2"), Color.parseColor("#4A00E0")), // Amin (Vibrant Purple)
-            intArrayOf(Color.parseColor("#C33764"), Color.parseColor("#1D2671")), // Celestial (Pink-Dark Blue)
-            intArrayOf(Color.parseColor("#F2994A"), Color.parseColor("#F2C94C"))  // Sun (Bright Orange-Yellow)
+            intArrayOf(Color.parseColor("#FF512F"), Color.parseColor("#DD2476")),
+            intArrayOf(Color.parseColor("#11998e"), Color.parseColor("#38ef7d")),
+            intArrayOf(Color.parseColor("#0575E6"), Color.parseColor("#021B79")),
+            intArrayOf(Color.parseColor("#8E2DE2"), Color.parseColor("#4A00E0")),
+            intArrayOf(Color.parseColor("#C33764"), Color.parseColor("#1D2671")),
+            intArrayOf(Color.parseColor("#F2994A"), Color.parseColor("#F2C94C"))
         )
         val randomColor = colors[Random.nextInt(colors.size)]
         
@@ -232,27 +239,20 @@ class MainActivity : AppCompatActivity() {
             randomColor
         )
         
-        // Save padding before setting background (as setBackground resets padding)
         val pLeft = mainLayout.paddingLeft
         val pTop = mainLayout.paddingTop
         val pRight = mainLayout.paddingRight
         val pBottom = mainLayout.paddingBottom
         
         mainLayout.background = gradient
-        
-        // Restore padding
         mainLayout.setPadding(pLeft, pTop, pRight, pBottom)
     }
 
     private fun addToHistory(quote: String, author: String) {
-        // Add to top of main list
         historyList.add(0, quote to author)
-        
-        // Limit to 10
         if (historyList.size > 10) {
             historyList.removeAt(historyList.size - 1)
         }
-        
         saveHistory()
         refreshHistoryUI()
     }
@@ -286,22 +286,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshHistoryUI() {
         historyContainer.removeAllViews()
-        
         for ((quote, author) in historyList) {
-            // Create CardView for each item
             val card = CardView(this)
             val params = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
-            params.setMargins(0, 0, 0, 16) // Bottom margin
+            params.setMargins(0, 0, 0, 16)
             card.layoutParams = params
             card.radius = 24f
             card.cardElevation = 4f
             card.setContentPadding(24, 24, 24, 24)
             card.setCardBackgroundColor(Color.WHITE)
 
-            // Content Container
             val itemLayout = LinearLayout(this)
             itemLayout.orientation = LinearLayout.VERTICAL
             
@@ -327,13 +324,10 @@ class MainActivity : AppCompatActivity() {
             itemLayout.addView(tvItemAuthor)
             card.addView(itemLayout)
             
-            // Interaction: Restore to main view
             card.setOnClickListener {
                 updateUI(quote, author)
                 Toast.makeText(this, "Quote dipulihkan ke atas", Toast.LENGTH_SHORT).show()
-                // Don't scroll up automatically, let user decide
             }
-
             historyContainer.addView(card)
         }
     }
